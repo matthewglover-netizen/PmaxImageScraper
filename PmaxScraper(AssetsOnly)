@@ -1,0 +1,174 @@
+/**
+ * PMax Asset Inventory — single sheet, images + videos
+ * Enabled campaigns + enabled asset groups
+ * Asset links: ENABLED or PAUSED
+ * No metrics, single tab, sorted by Campaign then Asset Group
+ *
+ * Remove columns: Channel Subtype, Asset Group ID
+ */
+
+// ===== SETTINGS =====
+var SPREADSHEET_URL = 'PUT YOUR URL HERE';
+var SHEET_NAME = 'pmax_assets';
+
+// ===== GLOBALS =====
+var ss = SpreadsheetApp.openByUrl(SPREADSHEET_URL);
+
+function main() {
+  Logger.log('Account: ' + AdsApp.currentAccount().getCustomerId());
+
+  var placements = getAssetGroupPlacements_();
+
+  var headers = [
+    'Campaign',
+    'Campaign ID',
+    'Asset Group',
+    'Field Type',
+    'Asset Type',
+    'Asset Name / Title',
+    'YouTube ID',
+    'Asset ID',
+    'Asset Resource',
+    'Asset Source',
+    'Media URL',
+    'Preview'
+  ];
+
+  var rows = [];
+
+  for (var key in placements) {
+    var r = placements[key];
+
+    if (r.asset.type === 'IMAGE') {
+      var imgUrl = safe_(r, 'asset.imageAsset.fullSize.url') || '';
+      var name = r.asset.name || 'IMAGE';
+
+      rows.push([
+        r.campaign.name,
+        r.campaign.id,
+        r.assetGroup.name,
+        r.assetGroupAsset.fieldType,
+        r.asset.type,
+        name,
+        '',
+        r.asset.id,
+        r.asset.resourceName,
+        r.asset.source || '',
+        imgUrl,
+        imgUrl ? '=IMAGE("' + imgUrl + '")' : ''
+      ]);
+
+    } else if (r.asset.type === 'YOUTUBE_VIDEO') {
+      var ytId = safe_(r, 'asset.youtubeVideoAsset.youtubeVideoId') || '';
+      var ytTitle = safe_(r, 'asset.youtubeVideoAsset.youtubeVideoTitle') || 'YouTube Video';
+      var watchUrl = ytId ? 'https://www.youtube.com/watch?v=' + ytId : '';
+      var thumbUrl = ytId ? 'https://img.youtube.com/vi/' + ytId + '/hqdefault.jpg' : '';
+
+      rows.push([
+        r.campaign.name,
+        r.campaign.id,
+        r.assetGroup.name,
+        r.assetGroupAsset.fieldType,
+        r.asset.type,
+        ytTitle,
+        ytId,
+        r.asset.id,
+        r.asset.resourceName,
+        r.asset.source || '',
+        watchUrl,
+        thumbUrl ? '=IMAGE("' + thumbUrl + '")' : ''
+      ]);
+    }
+  }
+
+  // Sort by Campaign, Asset Group, Field Type, Asset Type
+  rows.sort(function(a, b) {
+    return cmp_(a[0], b[0]) || cmp_(a[2], b[2]) || cmp_(a[3], b[3]) || cmp_(a[4], b[4]);
+  });
+
+  writeSheet_(SHEET_NAME, headers, rows);
+
+  Logger.log('Rows written: ' + rows.length);
+  Logger.log('Spreadsheet: ' + ss.getUrl());
+}
+
+/**
+ * Enabled PMax asset-group placements only, with asset links ENABLED or PAUSED.
+ * No serving-status filter. No campaign subtype, no asset group id.
+ *
+ * Key: campaignId#assetRes#assetGroupId#fieldType
+ */
+function getAssetGroupPlacements_() {
+  var ret = {};
+
+  var query = [
+    "SELECT",
+    "  campaign.id,",
+    "  campaign.name,",
+    "  asset_group.id,",
+    "  asset_group.name,",
+    "  asset_group_asset.field_type,",
+    "  asset_group_asset.status,",
+    "  asset_group_asset.asset,",
+    "  asset.type,",
+    "  asset.id,",
+    "  asset.resource_name,",
+    "  asset.source,",
+    "  asset.name,",
+    "  asset.image_asset.full_size.url,",
+    "  asset.youtube_video_asset.youtube_video_id,",
+    "  asset.youtube_video_asset.youtube_video_title",
+    "FROM asset_group_asset",
+    "WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'",
+    "  AND campaign.status = 'ENABLED'",
+    "  AND asset_group.status = 'ENABLED'",
+    "  AND asset_group_asset.status IN ('ENABLED','PAUSED')"
+  ].join("\n");
+
+  var it = AdsApp.search(query);
+  while (it.hasNext()) {
+    var row = it.next();
+
+    var key = [
+      row.campaign.id,
+      row.assetGroupAsset.asset,
+      row.assetGroup.id,
+      row.assetGroupAsset.fieldType
+    ].join('#');
+
+    ret[key] = row;
+  }
+  return ret;
+}
+
+// ===== helpers =====
+
+function writeSheet_(name, headers, rows) {
+  var sheet = ss.getSheetByName(name) || ss.insertSheet(name);
+  sheet.clear();
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (rows.length > 0) {
+    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  }
+  autoResizeColumns_(sheet, headers.length);
+}
+
+function autoResizeColumns_(sheet, colCount) {
+  for (var c = 1; c <= colCount; c++) {
+    try { sheet.autoResizeColumn(c); } catch (e) {}
+  }
+}
+
+function safe_(obj, path) {
+  try { return path.split('.').reduce(function(o, k){ return o && o[k]; }, obj) || ''; }
+  catch (e) { return ''; }
+}
+
+function cmp_(a, b) {
+  a = (a == null) ? '' : a.toString();
+  b = (b == null) ? '' : b.toString();
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
